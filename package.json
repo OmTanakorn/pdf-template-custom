@@ -7,7 +7,7 @@
     "studio": "pnpm --filter @pdftc/studio dev",
     "api": "pnpm --filter @pdftc/api start",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test packages/*/test/*.test.ts"
+    "test": "tsx --test packages/*/test/*.test.ts apps/*/test/*.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",

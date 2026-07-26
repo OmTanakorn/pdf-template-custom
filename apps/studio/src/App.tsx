@@ -91,6 +91,12 @@ export function App() {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ template: state.template, data: state.data }),
       });
+      if (res.status === 503) {
+        // The API sheds load rather than dying. Say so instead of showing a
+        // bare error — the request is fine, the server is just saturated.
+        const after = Number(res.headers.get('retry-after') ?? 5);
+        throw new Error(`เซิร์ฟเวอร์กำลังเรนเดอร์งานอื่นอยู่ ลองใหม่ในอีก ${after} วินาที`);
+      }
       if (!res.ok) throw new Error((await res.json()).error ?? res.statusText);
       const url = URL.createObjectURL(await res.blob());
       window.open(url, '_blank');
