@@ -214,6 +214,39 @@ input, select, textarea { font: inherit; color: inherit; }
 code { background: #f1f5f9; border-radius: 3px; padding: 0 3px; font-size: 10px; }
 .row-card { border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin-bottom: 8px; background: #fbfdff; }
 .row-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 11px; }
+.cell-card { border-top: 1px dashed var(--line); padding-top: 6px; margin-top: 6px; }
+
+/* Collapsed style editors (table cellStyle / zebra / row / cell). */
+.style-slot { border: 1px solid var(--line); border-radius: 6px; background: #fff; margin-bottom: 6px; }
+.style-slot > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+  list-style: none;
+}
+.style-slot > summary::-webkit-details-marker { display: none; }
+.style-slot > summary::before { content: '▸'; font-size: 9px; }
+.style-slot[open] > summary::before { content: '▾'; }
+.style-slot[open] > summary { border-bottom: 1px solid var(--line); }
+.style-slot-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.style-slot summary em { font-style: normal; font-size: 10px; color: #94a3b8; }
+/* Transparent reads as "inherited"; the checker shows through when unset. */
+.swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  background: repeating-conic-gradient(#e2e8f0 0% 25%, #fff 0% 50%) 50% / 8px 8px;
+}
+/* The shared StyleEditor ships its own section chrome; flatten it in here. */
+.style-slot-body .panel-section { border-bottom: 0; }
+.style-slot-body .panel-section > header { padding: 6px 8px 2px; }
+.style-slot-body .panel-body { padding: 2px 8px 8px; }
+.style-slot-body .field { grid-template-columns: 72px 1fr; }
 
 /* ── Code panes ──────────────────────────────────────────── */
 .editor-pane { display: flex; flex-direction: column; height: 100%; padding: 12px; gap: 8px; }

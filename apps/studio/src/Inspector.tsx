@@ -232,7 +232,7 @@ function NodeInspector({ node, template, onChange }: { node: Node; template: Tem
         </Section>
       )}
 
-      {node.type === 'table' && <TableEditor node={node} onChange={onChange} />}
+      {node.type === 'table' && <TableEditor node={node} onChange={onChange} styleNames={styleNames} />}
 
       <StyleEditor
         style={node.style}
