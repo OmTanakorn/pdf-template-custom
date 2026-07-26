@@ -115,20 +115,58 @@ curl -X POST localhost:8787/api/render \
   -d '{"template": {...}, "data": {...}}' -o out.pdf
 ```
 
-`POST /api/html` คืน HTML กลางไว้ดีบัก · `GET /api/example` คืนเทมเพลตตัวอย่าง · `GET /api/health` คืนตัวนับของ gate
+`POST /api/html` คืน HTML กลางไว้ดีบัก · `GET /api/example` คืนเทมเพลตตัวอย่าง · `GET /api/health` คืนตัวนับของ cache/gate/jobs
+
+### แบบ async
+
+เอกสารที่ใช้เวลานานไม่ควรถือ connection ไว้ทั้งใบ — proxy จะตัด แล้วเบราว์เซอร์จะ retry ซึ่งกลายเป็นสั่งเรนเดอร์ซ้ำงานที่ไม่มีใครรอแล้ว
+
+```bash
+curl -X POST 'localhost:8787/api/render?async=1' \
+  -H 'content-type: application/json' -d '{"template": {...}, "data": {...}}'
+# → 202 {"id":"…","state":"running","statusUrl":"/api/jobs/…","resultUrl":"/api/jobs/…/result"}
+
+curl localhost:8787/api/jobs/<id>          # {"state":"done","renderMs":49,"bytes":93908}
+curl localhost:8787/api/jobs/<id>/result -o out.pdf   # 202 ถ้ายังไม่เสร็จ · 500 ถ้าพัง
+```
+
+ส่งหัว `Prefer: respond-async` แทน query ก็ได้ ผลลัพธ์เก็บไว้ 5 นาที
 
 ### การคุมโหลด
 
-การเรนเดอร์หนึ่งครั้งกินหนึ่ง browser context (~50-100MB) ถ้าปล่อยให้ทำพร้อมกันไม่จำกัด ผู้ใช้กด Export รัว ๆ จะทำให้โปรเซสโดน OOM kill ก่อนได้ PDF ใบแรก `apps/api/src/gate.ts` จึงกันไว้สองชั้น
+การเรนเดอร์หนึ่งครั้งกินหนึ่ง browser context (~50-100MB) ถ้าปล่อยให้ทำพร้อมกันไม่จำกัด ผู้ใช้กด Export รัว ๆ จะทำให้โปรเซสโดน OOM kill ก่อนได้ PDF ใบแรก คำขอทุกใบจึงผ่านสามชั้น ถูกก่อนแพงทีหลัง
 
-1. **รวมงานซ้ำ** — body เหมือนกันเป๊ะ (sha1) ที่กำลังเรนเดอร์อยู่ จะแชร์ผลเดิม ไม่เรนเดอร์ซ้ำ และไม่กินช่องคิว กด 40 ครั้งรวดจึงเรนเดอร์จริงครั้งเดียว
-2. **เพดาน + คิวจำกัด** — เกินคิวหรือรอนานเกิน ตอบ `503` พร้อม `Retry-After` ทันที ดีกว่าค้าง connection ไว้จนเซิร์ฟเวอร์ตาย
+1. **cache** (`cache.ts`) — body เหมือนกันเป๊ะที่เพิ่งเรนเดอร์ไป คืนของเดิม (175ms → 1.8ms) LRU จำกัดเป็น MB ไม่ใช่จำนวนใบ
+2. **รวมงานซ้ำ** (`gate.ts`) — body เดียวกันที่กำลังเรนเดอร์อยู่ แชร์ผลเดิม และไม่กินช่องคิว กด 40 ครั้งรวดจึงเรนเดอร์จริงครั้งเดียว
+3. **เพดาน + คิวจำกัด** — เกินคิวหรือรอนานเกิน ตอบ `503` พร้อม `Retry-After` ทันที ดีกว่าค้าง connection ไว้จนเซิร์ฟเวอร์ตาย
+
+ปลอดภัยที่จะ cache เพราะการเรนเดอร์เป็นฟังก์ชันบริสุทธิ์ของ template + data — ภาษา binding อ่านวันที่จากข้อมูล ไม่ได้อ่านนาฬิกา ถ้าเพิ่ม filter เองด้วย `registerFilter` ที่ไม่ determinstic ต้องลด TTL ลง
 
 | ตัวแปรแวดล้อม | ค่าตั้งต้น | ความหมาย |
 | --- | --- | --- |
 | `RENDER_CONCURRENCY` | `min(4, max(2, cores))` | เรนเดอร์พร้อมกันได้กี่ฉบับ |
 | `RENDER_QUEUE` | `50` | รอคิวได้กี่ฉบับ ก่อนเริ่มตอบ 503 |
 | `RENDER_QUEUE_TIMEOUT_MS` | `20000` | รอคิวนานเกินนี้ถือว่าผู้ใช้ไปแล้ว |
+| `RENDER_JOB_QUEUE_TIMEOUT_MS` | `120000` | เท่ากันแต่สำหรับงาน async ที่ไม่มีใครถือ socket รอ |
+| `RENDER_CACHE_MB` | `64` | ขนาด cache ผลลัพธ์ · `0` = ปิด |
+| `RENDER_CACHE_TTL_MS` | `60000` | อายุของผลลัพธ์ใน cache |
+| `RENDER_JOB_TTL_MS` | `300000` | งาน async ที่เสร็จแล้ว เก็บผลไว้นานเท่าไร |
+| `RENDER_JOB_MAX` | `500` | เพดานจำนวนงานที่เก็บ |
+| `RENDER_MAX_PAGE_USES` | `5` | เรนเดอร์กี่ครั้งจึงทิ้ง page แล้วสร้างใหม่ |
+
+### page pool
+
+`PdfRenderer` ใช้ page ซ้ำใน context เดียว การสร้าง context ใหม่ทุกใบกิน ~55ms จาก ~125ms และโหลดฟอนต์ใหม่ทุกครั้ง เพราะ HTTP cache ตายไปพร้อม context
+
+แต่ล้าง page แล้ว Chromium ไม่คืนหน่วยความจำ — renderer process ยังอยู่ heap โตอย่างเดียว วัดบน invoice ตัวอย่างที่ concurrency 4:
+
+| | RSS หลังนิ่ง | 60 ใบใช้เวลา |
+| --- | --- | --- |
+| ไม่มี pool (context ใหม่ทุกใบ) | ~350MB | 1.88s |
+| pool ใช้ซ้ำไม่จำกัด | ~2.0GB | 1.04s |
+| pool + `RENDER_MAX_PAGE_USES=5` | ~712MB นิ่งตลอด 420 ใบ | 1.09s |
+
+ค่าตั้งต้นจึงเป็นแบบที่สาม — ยอมสร้าง page ใหม่ทุก 5 ใบ แลกกับเพดานของ heap
 
 ## ฟอนต์
 

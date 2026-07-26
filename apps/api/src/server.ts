@@ -2,13 +2,19 @@
  * Render service. Holds one Chromium open for the process lifetime, so a
  * render costs ~150ms instead of ~450ms.
  *
- * Renders go through `RenderGate`: a browser context is expensive enough that
- * unbounded concurrency is how this process dies. See `gate.ts`.
+ * Every render passes the same three layers, cheapest first:
  *
- * POST /api/render  { template, data }  → application/pdf
- * POST /api/html    { template, data }  → text/html (the intermediate document)
- * GET  /api/example                     → the bundled invoice template + data
- * GET  /api/health                      → gate counters
+ *   cache (`cache.ts`)  → identical bytes rendered moments ago
+ *   gate  (`gate.ts`)   → dedupe in-flight work, then bound concurrency
+ *   renderer            → Chromium
+ *
+ * POST   /api/render          { template, data }  → application/pdf
+ * POST   /api/render?async=1  { template, data }  → 202 + job id
+ * POST   /api/html            { template, data }  → text/html (the intermediate document)
+ * GET    /api/jobs/:id                            → job status
+ * GET    /api/jobs/:id/result                     → application/pdf once done
+ * GET    /api/example                             → the bundled invoice template + data
+ * GET    /api/health                              → gate, cache and job counters
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -16,22 +22,42 @@ import { createHash } from 'node:crypto';
 import { availableParallelism } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseTemplate } from '@pdftc/schema';
+import { parseTemplate, type Template } from '@pdftc/schema';
 import { PdfRenderer } from '@pdftc/pdf';
 import { OverloadError, RenderGate } from './gate.js';
+import { ResultCache } from './cache.js';
+import { JobStore, type Job } from './jobs.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const PORT = Number(process.env.PORT ?? 8787);
 const MAX_BODY = 8 * 1024 * 1024;
 
-const renderer = new PdfRenderer();
+// Chromium contexts are memory-bound, not CPU-bound: keep the ceiling low and
+// let the queue absorb bursts.
+const CONCURRENCY = Number(process.env.RENDER_CONCURRENCY ?? Math.min(4, Math.max(2, availableParallelism())));
+
+// A pool smaller than the concurrency limit would close and rebuild a page on
+// every render, which is the cost the pool exists to remove.
+const renderer = new PdfRenderer({
+  poolSize: CONCURRENCY,
+  maxPageUses: Number(process.env.RENDER_MAX_PAGE_USES ?? 5),
+});
 const gate = new RenderGate({
-  // Chromium contexts are memory-bound, not CPU-bound: keep the ceiling low
-  // and let the queue absorb bursts.
-  limit: Number(process.env.RENDER_CONCURRENCY ?? Math.min(4, Math.max(2, availableParallelism()))),
+  limit: CONCURRENCY,
   maxQueue: Number(process.env.RENDER_QUEUE ?? 50),
   queueTimeoutMs: Number(process.env.RENDER_QUEUE_TIMEOUT_MS ?? 20_000),
 });
+const cache = new ResultCache({
+  maxBytes: Number(process.env.RENDER_CACHE_MB ?? 64) * 1024 * 1024,
+  ttlMs: Number(process.env.RENDER_CACHE_TTL_MS ?? 60_000),
+});
+const jobs = new JobStore({
+  ttlMs: Number(process.env.RENDER_JOB_TTL_MS ?? 5 * 60_000),
+  maxJobs: Number(process.env.RENDER_JOB_MAX ?? 500),
+});
+// Nobody is holding a socket for an async job, so it can wait far longer for a
+// slot than a synchronous caller.
+const JOB_QUEUE_TIMEOUT_MS = Number(process.env.RENDER_JOB_QUEUE_TIMEOUT_MS ?? 120_000);
 
 async function readBody(req: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
@@ -71,7 +97,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 
   if (url.pathname === '/api/health') {
-    return send(res, 200, 'application/json', JSON.stringify(gate.stats));
+    return send(res, 200, 'application/json', JSON.stringify({ gate: gate.stats, cache: cache.stats, jobs: jobs.size }));
+  }
+
+  const job = url.pathname.match(/^\/api\/jobs\/([\w-]+)(\/result)?$/);
+  if (req.method === 'GET' && job) {
+    return sendJob(res, job[1]!, job[2] === '/result');
   }
 
   if (req.method === 'POST' && (url.pathname === '/api/render' || url.pathname === '/api/html')) {
@@ -82,19 +113,26 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     if (url.pathname === '/api/html') {
       return send(res, 200, 'text/html; charset=utf-8', renderer.toHtml(template, body.data, { embedFonts: true }));
     }
-    // Identical bytes in → identical PDF out, so a repeated click can share the
-    // render already running rather than start a second one.
+    // Identical bytes in → identical PDF out, so a repeat click can be served
+    // from cache, or joined to the render already running.
     const key = createHash('sha1').update(raw).digest('hex');
+
+    if (url.searchParams.get('async') === '1' || req.headers['prefer'] === 'respond-async') {
+      return startJob(res, key, template, body.data);
+    }
+
     const started = performance.now();
-    const pdf = await gate.run(key, () => renderer.render(template, body.data));
+    const hit = cache.get(key);
+    const pdf = hit ?? (await render(key, template, body.data));
     const { active, queued } = gate.stats;
     console.log(
       `render ${template.name} → ${(pdf.byteLength / 1024).toFixed(0)}KB in ${Math.round(performance.now() - started)}ms` +
-        ` (active ${active}, queued ${queued})`,
+        `${hit ? ' (cached)' : ''} (active ${active}, queued ${queued})`,
     );
     res.writeHead(200, {
       'content-type': 'application/pdf',
       'content-disposition': `inline; filename="document.pdf"`,
+      'x-pdftc-cache': hit ? 'hit' : 'miss',
       'access-control-allow-origin': '*',
     });
     res.end(Buffer.from(pdf));
@@ -102,6 +140,78 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 
   send(res, 404, 'application/json', '{"error":"not found"}');
+}
+
+/** Gate + render + populate the cache. Callers check the cache first. */
+async function render(key: string, template: Template, data: unknown, queueTimeoutMs?: number): Promise<Uint8Array> {
+  const opts = queueTimeoutMs === undefined ? {} : { queueTimeoutMs };
+  const pdf = await gate.run(
+    key,
+    async () => {
+      const result = await renderer.render(template, data);
+      cache.set(key, result);
+      return result;
+    },
+    opts,
+  );
+  return pdf;
+}
+
+/** Accept the work, answer with an id, render it in the background. */
+function startJob(res: ServerResponse, key: string, template: Template, data: unknown): void {
+  const record = jobs.create(template.name);
+
+  // A cached result means there is nothing to wait for, but still answer 202 so
+  // a client never has to branch on which shape it got back.
+  const cached = cache.get(key);
+  if (cached) {
+    jobs.started(record);
+    jobs.succeeded(record, cached);
+  } else {
+    void runJob(record, key, template, data);
+  }
+
+  res.writeHead(202, {
+    'content-type': 'application/json',
+    location: `/api/jobs/${record.id}`,
+    'access-control-allow-origin': '*',
+    'access-control-expose-headers': 'location',
+  });
+  res.end(JSON.stringify({ ...jobs.status(record), statusUrl: `/api/jobs/${record.id}`, resultUrl: `/api/jobs/${record.id}/result` }));
+}
+
+async function runJob(record: Job, key: string, template: Template, data: unknown): Promise<void> {
+  jobs.started(record);
+  try {
+    const pdf = await render(key, template, data, JOB_QUEUE_TIMEOUT_MS);
+    jobs.succeeded(record, pdf);
+    console.log(`job ${record.id} ${record.name} → ${(pdf.byteLength / 1024).toFixed(0)}KB in ${record.finishedAt! - record.startedAt!}ms`);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    jobs.failed(record, message, err instanceof OverloadError ? err.retryAfter : undefined);
+    console.error(`job ${record.id} failed: ${message}`);
+  }
+}
+
+function sendJob(res: ServerResponse, id: string, wantResult: boolean): void {
+  const record = jobs.get(id);
+  if (!record) return send(res, 404, 'application/json', '{"error":"unknown or expired job"}');
+
+  if (!wantResult) return send(res, 200, 'application/json', JSON.stringify(jobs.status(record)));
+
+  if (record.state === 'error') {
+    return send(res, 500, 'application/json', JSON.stringify({ error: record.error, retryAfter: record.retryAfter }));
+  }
+  if (record.state !== 'done' || !record.result) {
+    // 202 keeps polling honest: the id is valid, the bytes are not ready.
+    return send(res, 202, 'application/json', JSON.stringify(jobs.status(record)));
+  }
+  res.writeHead(200, {
+    'content-type': 'application/pdf',
+    'content-disposition': `inline; filename="document.pdf"`,
+    'access-control-allow-origin': '*',
+  });
+  res.end(Buffer.from(record.result));
 }
 
 createServer((req, res) => {

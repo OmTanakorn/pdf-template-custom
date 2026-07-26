@@ -78,8 +78,12 @@ export class RenderGate {
   /**
    * Run `task`, or join the identical `task` already running under `key`.
    * Rejects with `OverloadError` when the server has no room.
+   *
+   * `queueTimeoutMs` overrides the gate default for this caller — a background
+   * job nobody is waiting on can afford a far longer wait than a browser
+   * holding a connection open.
    */
-  run<T>(key: string, task: () => Promise<T>): Promise<T> {
+  run<T>(key: string, task: () => Promise<T>, opts: { queueTimeoutMs?: number } = {}): Promise<T> {
     const shared = this.inflight.get(key);
     if (shared) {
       this.deduped++;
@@ -87,12 +91,14 @@ export class RenderGate {
     }
     // Registered before the first await so a synchronous burst of duplicate
     // callers in the same tick all see the entry.
-    const promise = this.admit(task).finally(() => this.inflight.delete(key));
+    const promise = this.admit(task, opts.queueTimeoutMs ?? this.opts.queueTimeoutMs).finally(() =>
+      this.inflight.delete(key),
+    );
     this.inflight.set(key, promise);
     return promise;
   }
 
-  private admit<T>(task: () => Promise<T>): Promise<T> {
+  private admit<T>(task: () => Promise<T>, queueTimeoutMs: number): Promise<T> {
     if (this.active < this.opts.limit) return this.start(task);
     if (this.waiting.length >= this.opts.maxQueue) {
       this.rejected++;
@@ -107,7 +113,7 @@ export class RenderGate {
           if (i >= 0) this.waiting.splice(i, 1);
           this.rejected++;
           reject(new OverloadError('Timed out waiting for a render slot', this.retryAfter()));
-        }, this.opts.queueTimeoutMs),
+        }, queueTimeoutMs),
       };
       // A timer alone must not hold the process open at shutdown.
       waiter.timer.unref?.();
