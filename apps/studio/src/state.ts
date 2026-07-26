@@ -11,6 +11,13 @@ export type Selection =
   | { kind: 'page' }
   | null;
 
+/** Which stored template is open, and at which revision it was loaded. */
+export interface DocMeta {
+  id: string;
+  name: string;
+  rev: number;
+}
+
 export interface EditorState {
   template: Template;
   data: unknown;
@@ -20,14 +27,21 @@ export interface EditorState {
   zoom: number;
   past: Template[];
   future: Template[];
+  /** `null` while the document has never been saved to the library. */
+  doc: DocMeta | null;
+  /** Edited since the last load or save — drives the save button and the unload guard. */
+  dirty: boolean;
 }
 
 export type Action =
-  | { type: 'load'; template: Template; data: unknown }
+  | { type: 'load'; template: Template; data: unknown; doc?: DocMeta | null }
   | { type: 'setTemplate'; template: Template; coalesce?: boolean }
   | { type: 'setDataText'; text: string }
   | { type: 'select'; selection: Selection }
   | { type: 'zoom'; zoom: number }
+  | { type: 'saved'; doc: DocMeta }
+  | { type: 'renamed'; doc: DocMeta }
+  | { type: 'detach' }
   | { type: 'undo' }
   | { type: 'redo' };
 
@@ -45,21 +59,34 @@ export function reducer(state: EditorState, action: Action): EditorState {
         selection: null,
         past: [],
         future: [],
+        doc: action.doc ?? null,
+        dirty: false,
       };
 
     case 'setTemplate': {
       // Dragging fires per pointermove; coalescing keeps one undo step per gesture.
       const past = action.coalesce && state.past.length > 0 ? state.past : [...state.past, state.template].slice(-HISTORY_LIMIT);
-      return { ...state, template: action.template, past, future: [] };
+      return { ...state, template: action.template, past, future: [], dirty: true };
     }
 
     case 'setDataText': {
       try {
-        return { ...state, dataText: action.text, data: JSON.parse(action.text), dataError: null };
+        return { ...state, dataText: action.text, data: JSON.parse(action.text), dataError: null, dirty: true };
       } catch (err) {
-        return { ...state, dataText: action.text, dataError: err instanceof Error ? err.message : String(err) };
+        return { ...state, dataText: action.text, dataError: err instanceof Error ? err.message : String(err), dirty: true };
       }
     }
+
+    case 'saved':
+      return { ...state, doc: action.doc, template: { ...state.template, name: action.doc.name }, dirty: false };
+
+    // A rename writes only the name, so whatever else was unsaved still is.
+    case 'renamed':
+      return { ...state, doc: action.doc, template: { ...state.template, name: action.doc.name } };
+
+    // The stored copy is gone; what is on screen is now an unsaved document.
+    case 'detach':
+      return { ...state, doc: null, dirty: true };
 
     case 'select':
       return { ...state, selection: action.selection };
@@ -70,13 +97,13 @@ export function reducer(state: EditorState, action: Action): EditorState {
     case 'undo': {
       const previous = state.past.at(-1);
       if (!previous) return state;
-      return { ...state, template: previous, past: state.past.slice(0, -1), future: [state.template, ...state.future] };
+      return { ...state, template: previous, past: state.past.slice(0, -1), future: [state.template, ...state.future], dirty: true };
     }
 
     case 'redo': {
       const next = state.future[0];
       if (!next) return state;
-      return { ...state, template: next, past: [...state.past, state.template], future: state.future.slice(1) };
+      return { ...state, template: next, past: [...state.past, state.template], future: state.future.slice(1), dirty: true };
     }
   }
 }

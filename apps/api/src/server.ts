@@ -15,6 +15,15 @@
  * GET    /api/jobs/:id/result                     → application/pdf once done
  * GET    /api/example                             → the bundled invoice template + data
  * GET    /api/health                              → gate, cache and job counters
+ *
+ * The template library (`templates.ts`) is stored per file on disk:
+ *
+ * GET    /api/templates                           → summaries, newest save first
+ * POST   /api/templates       { name, template, data }
+ * GET    /api/templates/:id                       → the full record
+ * PUT    /api/templates/:id   { rev, name?, template?, data? }  → 409 if stale
+ * POST   /api/templates/:id/duplicate  { name? }
+ * DELETE /api/templates/:id
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -27,6 +36,7 @@ import { PdfRenderer } from '@pdftc/pdf';
 import { OverloadError, RenderGate } from './gate.js';
 import { ResultCache } from './cache.js';
 import { JobStore, type Job } from './jobs.js';
+import { ConflictError, NotFoundError, TemplateStore } from './templates.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const PORT = Number(process.env.PORT ?? 8787);
@@ -58,6 +68,7 @@ const jobs = new JobStore({
 // Nobody is holding a socket for an async job, so it can wait far longer for a
 // slot than a synchronous caller.
 const JOB_QUEUE_TIMEOUT_MS = Number(process.env.RENDER_JOB_QUEUE_TIMEOUT_MS ?? 120_000);
+const templates = new TemplateStore(process.env.TEMPLATE_DIR ?? resolve(ROOT, '.templates'));
 
 async function readBody(req: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
@@ -81,11 +92,15 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
       'access-control-allow-origin': '*',
-      'access-control-allow-methods': 'GET,POST,OPTIONS',
+      'access-control-allow-methods': 'GET,POST,PUT,DELETE,OPTIONS',
       'access-control-allow-headers': 'content-type',
     });
     res.end();
     return;
+  }
+
+  if (url.pathname === '/api/templates' || url.pathname.startsWith('/api/templates/')) {
+    return handleTemplates(req, res, url);
   }
 
   if (url.pathname === '/api/example') {
@@ -97,7 +112,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 
   if (url.pathname === '/api/health') {
-    return send(res, 200, 'application/json', JSON.stringify({ gate: gate.stats, cache: cache.stats, jobs: jobs.size }));
+    return send(res, 200, 'application/json', JSON.stringify({ gate: gate.stats, cache: cache.stats, jobs: jobs.size, templates: await templates.count() }));
   }
 
   const job = url.pathname.match(/^\/api\/jobs\/([\w-]+)(\/result)?$/);
@@ -140,6 +155,49 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 
   send(res, 404, 'application/json', '{"error":"not found"}');
+}
+
+/** `/api/templates` and `/api/templates/:id[/duplicate]`. */
+async function handleTemplates(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+  const rest = url.pathname.slice('/api/templates'.length).replace(/^\//, '');
+  const [id = '', action = ''] = rest.split('/');
+  const body = async () => JSON.parse((await readBody(req)) || '{}');
+
+  try {
+    if (!id) {
+      if (req.method === 'GET') return send(res, 200, 'application/json', JSON.stringify(await templates.list()));
+      if (req.method === 'POST') {
+        const record = await templates.create(await body());
+        console.log(`template created ${record.id} (${record.name})`);
+        return send(res, 201, 'application/json', JSON.stringify(record));
+      }
+      return send(res, 405, 'application/json', '{"error":"method not allowed"}');
+    }
+
+    if (action === 'duplicate') {
+      if (req.method !== 'POST') return send(res, 405, 'application/json', '{"error":"method not allowed"}');
+      const record = await templates.duplicate(id, (await body()).name);
+      return send(res, 201, 'application/json', JSON.stringify(record));
+    }
+    if (action) return send(res, 404, 'application/json', '{"error":"not found"}');
+
+    if (req.method === 'GET') return send(res, 200, 'application/json', JSON.stringify(await templates.get(id)));
+    if (req.method === 'PUT') {
+      const record = await templates.update(id, await body());
+      return send(res, 200, 'application/json', JSON.stringify(record));
+    }
+    if (req.method === 'DELETE') {
+      await templates.remove(id);
+      return send(res, 204, 'application/json', '');
+    }
+    return send(res, 405, 'application/json', '{"error":"method not allowed"}');
+  } catch (err) {
+    if (err instanceof NotFoundError) return send(res, 404, 'application/json', JSON.stringify({ error: err.message }));
+    // The client holds an older copy: tell it which rev won so it can offer to
+    // reload rather than guessing why the save vanished.
+    if (err instanceof ConflictError) return send(res, 409, 'application/json', JSON.stringify({ error: err.message, rev: err.current }));
+    throw err;
+  }
 }
 
 /** Gate + render + populate the cache. Callers check the cache first. */

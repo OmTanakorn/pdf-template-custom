@@ -3,6 +3,7 @@ import { parseTemplate, type Template } from '@pdftc/schema';
 import { Canvas } from './Canvas';
 import { Inspector } from './Inspector';
 import { Tree } from './Tree';
+import { TemplateBar, useLibrary } from './TemplateBar';
 import { EMPTY_TEMPLATE, layerItems, reducer, updatePlaced, withLayerItems, type EditorState } from './state';
 
 const initial: EditorState = {
@@ -14,6 +15,8 @@ const initial: EditorState = {
   zoom: 0.9,
   past: [],
   future: [],
+  doc: null,
+  dirty: false,
 };
 
 export function App() {
@@ -21,6 +24,7 @@ export function App() {
   const [tab, setTab] = useState<'design' | 'data' | 'json'>('design');
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const library = useLibrary(state, dispatch);
 
   const loadExample = useCallback(async () => {
     const res = await fetch('/api/example');
@@ -32,9 +36,25 @@ export function App() {
     void loadExample().catch(() => dispatch({ type: 'load', template: EMPTY_TEMPLATE, data: {} }));
   }, [loadExample]);
 
-  // Keyboard: undo/redo, nudge, delete. Ignored while typing in a field.
+  // Closing the tab is the one way to lose work that no undo can bring back.
+  useEffect(() => {
+    if (!state.dirty) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [state.dirty]);
+
+  // Keyboard: save, undo/redo, nudge, delete. Only save survives a focused
+  // field — Ctrl+S mid-edit in the data pane must not open the browser's own
+  // save dialog.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        void library.save();
+        return;
+      }
+
       const target = e.target as HTMLElement;
       if (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
 
@@ -81,7 +101,7 @@ export function App() {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [state.selection, state.template]);
+  }, [library, state.selection, state.template]);
 
   async function renderPdf() {
     setBusy(true);
@@ -129,6 +149,8 @@ export function App() {
     <div className="app">
       <header className="toolbar">
         <strong className="brand">PDF Template Studio</strong>
+
+        <TemplateBar state={state} lib={library} />
 
         <div className="tool-group">
           <button type="button" onClick={() => dispatch({ type: 'undo' })} disabled={state.past.length === 0} title="Ctrl+Z">
