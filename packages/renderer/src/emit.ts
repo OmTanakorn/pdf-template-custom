@@ -11,7 +11,7 @@
  */
 
 import { pageSize, type Cell, type Node, type Placed, type Row, type Style, type TableNode, type Template } from '@pdftc/schema';
-import { escapeAttr, escapeHtml, mergeStyles, mm, styleToCss } from './css.js';
+import { cssSafe, cssUrl, escapeAttr, escapeHtml, mergeStyles, mm, styleAttr, styleToCss } from './css.js';
 import { PAGINATOR_SOURCE } from './paginator.js';
 
 export interface EmitOptions {
@@ -52,11 +52,11 @@ function emitNode(ctx: Ctx, node: Node, inherited?: Style): string {
   switch (node.type) {
     case 'text': {
       const shrink = s.shrinkToFit ? ' data-shrink="1"' : '';
-      return `<div class="n text" data-id="${id}"${shrink} style="${css}">${escapeHtml(node.content).replace(/\n/g, '<br>')}</div>`;
+      return `<div class="n text" data-id="${id}"${shrink} style="${styleAttr(css)}">${escapeHtml(node.content).replace(/\n/g, '<br>')}</div>`;
     }
 
     case 'rect':
-      return `<div class="n rect" data-id="${id}" style="${css}"></div>`;
+      return `<div class="n rect" data-id="${id}" style="${styleAttr(css)}"></div>`;
 
     case 'line': {
       const thickness = node.style?.border?.all?.width ?? 0.5;
@@ -65,23 +65,23 @@ function emitNode(ctx: Ctx, node: Node, inherited?: Style): string {
         node.orientation === 'vertical'
           ? `border-left:${thickness}pt solid ${color};height:100%;width:0`
           : `border-top:${thickness}pt solid ${color};width:100%;height:0`;
-      return `<div class="n line" data-id="${id}" style="${css};${rule}"></div>`;
+      return `<div class="n line" data-id="${id}" style="${styleAttr(`${css};${rule}`)}"></div>`;
     }
 
     case 'image':
-      return `<img class="n image" data-id="${id}" style="${css};object-fit:${node.fit};width:100%;height:100%" src="${escapeAttr(node.src)}" alt="">`;
+      return `<img class="n image" data-id="${id}" style="${styleAttr(`${css};object-fit:${node.fit};width:100%;height:100%`)}" src="${escapeAttr(node.src)}" alt="">`;
 
     case 'barcode':
       // Encoding happens in a prepare step that swaps this for an <img>.
-      return `<div class="n barcode" data-id="${id}" data-format="${escapeAttr(node.format)}" data-value="${escapeAttr(node.value)}" style="${css}"></div>`;
+      return `<div class="n barcode" data-id="${id}" data-format="${escapeAttr(node.format)}" data-value="${escapeAttr(node.value)}" style="${styleAttr(css)}"></div>`;
 
     case 'pageNumber':
-      return `<div class="n page-number" data-id="${id}" data-format="${escapeAttr(node.format)}" style="${css}"></div>`;
+      return `<div class="n page-number" data-id="${id}" data-format="${escapeAttr(node.format)}" style="${styleAttr(css)}"></div>`;
 
     case 'stack': {
       const flex = `display:flex;flex-direction:${node.direction};gap:${mm(node.gap)}`;
       const children = node.children.map((c) => emitNode(ctx, c, undefined)).join('');
-      return `<div class="n stack" data-id="${id}" style="${css};${flex}">${children}</div>`;
+      return `<div class="n stack" data-id="${id}" style="${styleAttr(`${css};${flex}`)}">${children}</div>`;
     }
 
     case 'table':
@@ -110,7 +110,7 @@ function emitCell(ctx: Ctx, cell: Cell, node: TableNode, rowStyle: Style, zebra:
   const s = styleOf(ctx, cell, base);
   const attrs = [cell.colSpan ? ` colspan="${cell.colSpan}"` : '', cell.rowSpan ? ` rowspan="${cell.rowSpan}"` : ''].join('');
   const inner = cell.content.map((c) => emitNode(ctx, c, undefined)).join('');
-  return `<td${attrs} style="${styleToCss(s)}">${inner}</td>`;
+  return `<td${attrs} style="${styleAttr(styleToCss(s))}">${inner}</td>`;
 }
 
 function emitRow(ctx: Ctx, row: Row, node: TableNode, index: number, section: 'head' | 'body' | 'foot'): string {
@@ -118,7 +118,7 @@ function emitRow(ctx: Ctx, row: Row, node: TableNode, index: number, section: 'h
   const zebra = section === 'body' && index % 2 === 1;
   const height = row.height != null ? `height:${mm(row.height)};` : '';
   const cells = row.cells.map((c) => emitCell(ctx, c, node, rowStyle, zebra)).join('');
-  return `<tr data-id="${escapeAttr(row.id)}" style="${height}${styleToCss(rowStyle)}">${cells}</tr>`;
+  return `<tr data-id="${escapeAttr(row.id)}" style="${styleAttr(`${height}${styleToCss(rowStyle)}`)}">${cells}</tr>`;
 }
 
 function emitTable(ctx: Ctx, node: TableNode, s: Style): string {
@@ -127,7 +127,7 @@ function emitTable(ctx: Ctx, node: TableNode, s: Style): string {
   const head = node.head.length ? `<thead>${node.head.map((r, i) => emitRow(ctx, r, node, i, 'head')).join('')}</thead>` : '';
   const foot = node.foot.length ? `<tfoot>${node.foot.map((r, i) => emitRow(ctx, r, node, i, 'foot')).join('')}</tfoot>` : '';
   const body = `<tbody>${node.body.map((r, i) => emitRow(ctx, r, node, i, 'body')).join('')}</tbody>`;
-  return `<table class="n tbl" data-id="${escapeAttr(node.id)}" style="${styleToCss(s)};table-layout:${layout}">${emitColgroup(node)}${head}${body}${foot}</table>`;
+  return `<table class="n tbl" data-id="${escapeAttr(node.id)}" style="${styleAttr(`${styleToCss(s)};table-layout:${layout}`)}">${emitColgroup(node)}${head}${body}${foot}</table>`;
 }
 
 /* ── Absolute layers ─────────────────────────────────────────── */
@@ -145,7 +145,7 @@ function emitPlaced(ctx: Ctx, item: Placed, yOffset: number): string {
     .filter(Boolean)
     .join(';');
   const on = Array.isArray(item.on) ? item.on.join(',') : item.on;
-  return `<div class="placed" data-on="${escapeAttr(on)}" style="${box}">${emitNode(ctx, item.node)}</div>`;
+  return `<div class="placed" data-on="${escapeAttr(on)}" style="${styleAttr(box)}">${emitNode(ctx, item.node)}</div>`;
 }
 
 /* ── Fonts ───────────────────────────────────────────────────── */
@@ -154,9 +154,12 @@ function emitFontFaces(ctx: Ctx): string {
   const resolve = ctx.opts.fontResolver ?? ((src: string) => src);
   return ctx.template.fonts
     .map((f) => {
-      const url = resolve(f.src);
+      // A `<style>` block is not HTML-escaped, so a quote or brace in either
+      // value would end the rule — or the whole element.
+      const url = cssUrl(resolve(f.src));
+      const family = cssSafe(f.family);
       const weight = f.weight === 'normal' ? 400 : f.weight === 'bold' ? 700 : f.weight;
-      return `@font-face{font-family:"${f.family}";font-weight:${weight};font-style:${f.italic ? 'italic' : 'normal'};src:url("${url}");font-display:block}`;
+      return `@font-face{font-family:"${family}";font-weight:${weight};font-style:${f.italic ? 'italic' : 'normal'};src:url("${url}");font-display:block}`;
     })
     .join('\n');
 }

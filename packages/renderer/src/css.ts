@@ -17,6 +17,34 @@ export function escapeAttr(s: string): string {
   return escapeHtml(s);
 }
 
+/**
+ * Declarations bound for a `style="…"` attribute.
+ *
+ * Font stacks quote family names, so an unescaped style attribute terminates
+ * at the first `"` and silently drops every declaration after the font — which
+ * is every other property the node had.
+ */
+export function styleAttr(css: string): string {
+  return escapeAttr(css);
+}
+
+/**
+ * A string headed for a `<style>` block or a CSS identifier, where HTML
+ * escaping does not apply and a stray quote or brace would end the rule.
+ */
+export function cssSafe(value: string): string {
+  return value.replace(/["'\\<>{};()]/g, '');
+}
+
+/**
+ * A URL for `url("…")`. Keeps `;` and `,` because data URIs need them
+ * (`data:font/ttf;base64,…`) and drops only what could close the string or
+ * the surrounding element.
+ */
+export function cssUrl(value: string): string {
+  return value.replace(/["'\\<>()\s]/g, '');
+}
+
 function boxToCss(prop: string, box: Box): string[] {
   return [`${prop}:${mm(box.top)} ${mm(box.right)} ${mm(box.bottom)} ${mm(box.left)}`];
 }
@@ -77,6 +105,7 @@ export function styleToCss(s: Style, opts: { asFlex?: boolean } = {}): string {
 
 /** Always fall back to a Thai-capable family so missing glyphs never tofu. */
 export function cssFontStack(family: string): string {
-  const quoted = /^[A-Za-z0-9_-]+$/.test(family) ? family : `"${family.replace(/"/g, '')}"`;
+  const safe = cssSafe(family);
+  const quoted = /^[A-Za-z0-9_-]+$/.test(safe) ? safe : `"${safe}"`;
   return `${quoted}, "Noto Sans Thai", "Sarabun", sans-serif`;
 }
