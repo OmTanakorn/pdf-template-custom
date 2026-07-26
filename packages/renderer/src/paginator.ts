@@ -36,22 +36,93 @@ export const PAGINATOR_SOURCE = String.raw`
     return cur.content.scrollHeight > cur.content.clientHeight + EPS;
   }
 
+  function tableOccupancy(tbody) {
+    var grid = [];
+    var cells = [];
+    for (var rowIndex = 0; rowIndex < tbody.rows.length; rowIndex++) {
+      var row = tbody.rows[rowIndex];
+      if (!grid[rowIndex]) grid[rowIndex] = [];
+      var column = 0;
+      for (var cellIndex = 0; cellIndex < row.cells.length; cellIndex++) {
+        while (grid[rowIndex][column]) column++;
+        var cell = row.cells[cellIndex];
+        var rowSpan = cell.rowSpan || 1;
+        var colSpan = cell.colSpan || 1;
+        var entry = {
+          cell: cell,
+          startRow: rowIndex,
+          startColumn: column,
+          rowSpan: rowSpan,
+          colSpan: colSpan,
+        };
+        cells.push(entry);
+        for (var r = rowIndex; r < rowIndex + rowSpan; r++) {
+          if (!grid[r]) grid[r] = [];
+          for (var c = column; c < column + colSpan; c++) grid[r][c] = entry;
+        }
+        column += colSpan;
+      }
+    }
+    return { grid: grid, cells: cells };
+  }
+
+  function clampRowSpans(entries, cut) {
+    for (var i = 0; i < entries.length; i++) {
+      var entry = entries[i];
+      var span = entry.rowSpan;
+      if (entry.startRow < cut && entry.startRow + span > cut) span = cut - entry.startRow;
+      if (entry.cell.rowSpan !== span) entry.cell.rowSpan = span;
+    }
+  }
+
+  function insertAtColumn(row, cell, column) {
+    var current = 0;
+    for (var i = 0; i < row.cells.length; i++) {
+      var before = row.cells[i];
+      if (current >= column) {
+        row.insertBefore(cell, before);
+        return;
+      }
+      current += before.colSpan || 1;
+    }
+    row.appendChild(cell);
+  }
+
   function splitTable(table) {
     var tbody = table.tBodies[0];
     if (!tbody || tbody.rows.length === 0) return;
     var tfoot = table.tFoot;
     if (tfoot) tfoot.remove(); // the foot belongs on the last slice only
 
+    var occupancy = tableOccupancy(tbody);
+    var cut = tbody.rows.length;
     var carry = [];
-    while (overflows() && tbody.rows.length > 1) {
+    var guard = tbody.rows.length;
+    while (overflows() && tbody.rows.length > 1 && guard-- > 0) {
       var row = tbody.rows[tbody.rows.length - 1];
       carry.unshift(row);
       row.remove();
+      cut--;
+      clampRowSpans(occupancy.cells, cut);
     }
 
     if (carry.length === 0) {
       if (tfoot) table.appendChild(tfoot);
       return;
+    }
+
+    var crossing = occupancy.cells.filter(function (entry) {
+      return entry.startRow < cut && entry.startRow + entry.rowSpan > cut;
+    });
+    crossing.sort(function (a, b) { return a.startColumn - b.startColumn; });
+    for (var i = 0; i < crossing.length; i++) {
+      var entry = crossing[i];
+      var continuation = document.createElement('td');
+      continuation.className = entry.cell.className;
+      continuation.style.cssText = entry.cell.style.cssText;
+      continuation.rowSpan = entry.startRow + entry.rowSpan - cut;
+      continuation.colSpan = entry.colSpan;
+      insertAtColumn(carry[0], continuation, entry.startColumn);
     }
 
     cur = newPage();
