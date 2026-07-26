@@ -97,14 +97,14 @@ export function Segment<T extends string>({ value, options, onChange }: { value:
   );
 }
 
-export function Section({ title, children, actions }: { title: string; children: ReactNode; actions?: ReactNode }) {
+export function Section({ title, children, actions }: { title: string; children?: ReactNode; actions?: ReactNode }) {
   return (
     <section className="panel-section">
       <header>
         <h3>{title}</h3>
         {actions}
       </header>
-      <div className="panel-body">{children}</div>
+      {children !== undefined && <div className="panel-body">{children}</div>}
     </section>
   );
 }

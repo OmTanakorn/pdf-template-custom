@@ -3,7 +3,7 @@ import { PAGE_PRESETS } from '@pdftc/schema';
 import { Num, Row, Section, Segment, Select, Text } from './fields';
 import { BindingHint, StyleEditor } from './StyleEditor';
 import { TableEditor } from './TableEditor';
-import { layerItems, mergeNodeStyle, removePlaced, updatePlaced, withLayerItems, type Action, type Selection } from './state';
+import { applyStylePatch, layerItems, mergeNodeStyle, removePlaced, updatePlaced, withLayerItems, type Action, type Selection } from './state';
 
 interface Props {
   template: Template;
@@ -78,6 +78,37 @@ export function Inspector({ template, selection, dispatch }: Props) {
         </Section>
 
         <NodeInspector node={item.node} template={template} onChange={patchNode} />
+      </>
+    );
+  }
+
+  if (selection.kind === 'style') {
+    const style = template.styles[selection.name];
+    if (style === undefined) return <p className="hint pad">ไม่พบสไตล์ที่เลือก</p>;
+
+    const patchStyle = (patch: Style) =>
+      commit({ ...template, styles: { ...template.styles, [selection.name]: applyStylePatch(style, patch) } });
+
+    return (
+      <>
+        <Section
+          title={`สไตล์ · ${selection.name}`}
+          actions={
+            <button
+              type="button"
+              className="danger"
+              onClick={() => {
+                const styles = { ...template.styles };
+                delete styles[selection.name];
+                commit({ ...template, styles });
+                dispatch({ type: 'select', selection: null });
+              }}
+            >
+              ลบ
+            </button>
+          }
+        />
+        <StyleEditor style={style} onChange={patchStyle} />
       </>
     );
   }

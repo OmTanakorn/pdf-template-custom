@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import type { Node, Template } from '@pdftc/schema';
-import { blankNode, layerItems, newId, withLayerItems, type Action, type LayerName, type Selection } from './state';
+import { blankNode, layerItems, newId, renameStyleRefs, withLayerItems, type Action, type LayerName, type Selection } from './state';
 
 const ADDABLE: { type: Node['type']; label: string }[] = [
   { type: 'text', label: 'ข้อความ' },
@@ -116,7 +117,7 @@ export function Tree({ template, selection, dispatch }: Props) {
         </ul>
       </section>
 
-      <StylesPanel template={template} commit={commit} />
+      <StylesPanel template={template} selection={selection} commit={commit} dispatch={dispatch} />
     </div>
   );
 }
@@ -147,50 +148,107 @@ function AddMenu({ onPick }: { onPick: (type: Node['type']) => void }) {
   );
 }
 
-function StylesPanel({ template, commit }: { template: Template; commit: (t: Template) => void }) {
+function StylesPanel({
+  template,
+  selection,
+  commit,
+  dispatch,
+}: {
+  template: Template;
+  selection: Selection;
+  commit: (t: Template) => void;
+  dispatch: (action: Action) => void;
+}) {
   const names = Object.keys(template.styles);
+  const [error, setError] = useState<string | null>(null);
+
+  function addStyle() {
+    const name = newId('style');
+    commit({ ...template, styles: { ...template.styles, [name]: { fontSize: 10 } } });
+    dispatch({ type: 'select', selection: { kind: 'style', name } });
+  }
+
+  /** Returns false when the new name was rejected, so the input can snap back. */
+  function renameStyle(name: string, input: string): boolean {
+    const nextName = input.trim();
+    const style = template.styles[name];
+    if (style === undefined) return false;
+    if (nextName === name) {
+      setError(null);
+      return true;
+    }
+    // A blank name would vanish from the picker and a taken one would clobber
+    // another style — either way every styleRef pointing here loses its styling.
+    if (nextName === '' || nextName in template.styles) {
+      setError(nextName === '' ? 'ชื่อสไตล์ว่างไม่ได้' : `มีสไตล์ชื่อ "${nextName}" อยู่แล้ว`);
+      return false;
+    }
+    setError(null);
+    const styles = { ...template.styles };
+    delete styles[name];
+    styles[nextName] = style;
+    commit(renameStyleRefs({ ...template, styles }, name, nextName));
+    if (selection?.kind === 'style' && selection.name === name) {
+      dispatch({ type: 'select', selection: { kind: 'style', name: nextName } });
+    }
+    return true;
+  }
+
+  function removeStyle(name: string) {
+    const styles = { ...template.styles };
+    delete styles[name];
+    commit({ ...template, styles });
+    if (selection?.kind === 'style' && selection.name === name) {
+      dispatch({ type: 'select', selection: null });
+    }
+  }
+
   return (
     <section className="tree-group">
       <header>
         <h4>สไตล์ที่ตั้งชื่อไว้</h4>
-        <button
-          type="button"
-          className="add-menu"
-          onClick={() => commit({ ...template, styles: { ...template.styles, [newId('style')]: { fontSize: 10 } } })}
-        >
+        <button type="button" className="add-menu" onClick={addStyle}>
           + เพิ่ม
         </button>
       </header>
       <ul>
-        {names.map((name) => (
-          <li key={name}>
-            <input
-              className="style-name"
-              value={name}
-              onChange={(e) => {
-                const next = { ...template.styles };
-                const value = next[name]!;
-                delete next[name];
-                next[e.target.value] = value;
-                commit({ ...template, styles: next });
-              }}
-            />
-            <span className="reorder">
-              <button
-                type="button"
-                onClick={() => {
-                  const next = { ...template.styles };
-                  delete next[name];
-                  commit({ ...template, styles: next });
+        {names.map((name) => {
+          const active = selection?.kind === 'style' && selection.name === name;
+          return (
+            <li
+              key={name}
+              className={active ? 'is-active' : ''}
+              onClick={() => dispatch({ type: 'select', selection: { kind: 'style', name } })}
+            >
+              <input
+                className="style-name"
+                defaultValue={name}
+                onFocus={() => dispatch({ type: 'select', selection: { kind: 'style', name } })}
+                onBlur={(e) => {
+                  if (!renameStyle(name, e.target.value)) e.target.value = name;
                 }}
-              >
-                ×
-              </button>
-            </span>
-          </li>
-        ))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') e.currentTarget.blur();
+                }}
+              />
+              <span className="reorder">
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeStyle(name);
+                  }}
+                >
+                  ×
+                </button>
+              </span>
+            </li>
+          );
+        })}
         {names.length === 0 && <li className="empty">ว่าง</li>}
       </ul>
+      {error && <p className="tree-error">{error}</p>}
     </section>
   );
 }

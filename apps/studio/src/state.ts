@@ -4,7 +4,12 @@ import { pageSize } from '@pdftc/schema';
 export type LayerName = 'header' | 'overlay' | 'footer';
 
 /** What the inspector is pointed at. Placed items are also drag targets. */
-export type Selection = { kind: 'placed'; layer: LayerName; index: number } | { kind: 'body'; index: number } | { kind: 'page' } | null;
+export type Selection =
+  | { kind: 'placed'; layer: LayerName; index: number }
+  | { kind: 'body'; index: number }
+  | { kind: 'style'; name: string }
+  | { kind: 'page' }
+  | null;
 
 export interface EditorState {
   template: Template;
@@ -100,10 +105,50 @@ export function removePlaced(template: Template, layer: LayerName, index: number
   );
 }
 
+/** Drop keys the inspector cleared instead of storing them as `undefined`. */
+export function applyStylePatch(style: Style | undefined, patch: Style): Style {
+  const next = { ...style, ...patch };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined || value === '') delete (next as Record<string, unknown>)[key];
+  }
+  return next;
+}
+
+/**
+ * Rewrite every `styleRef` pointing at `from` so it follows a rename. Without
+ * this, renaming a named style silently unstyles everything that used it —
+ * nodes, table rows and cells all carry their own `styleRef`.
+ */
+export function renameStyleRefs(template: Template, from: string, to: string): Template {
+  const retarget = <T extends { styleRef?: string }>(item: T): T => (item.styleRef === from ? { ...item, styleRef: to } : item);
+
+  const walk = (node: Node): Node => {
+    const next = retarget(node);
+    if (next.type === 'stack') return { ...next, children: next.children.map(walk) };
+    if (next.type === 'table') {
+      const rows = (list: typeof next.head) =>
+        list.map((row) => ({
+          ...retarget(row),
+          cells: row.cells.map((cell) => ({ ...retarget(cell), content: cell.content.map(walk) })),
+        }));
+      return { ...next, head: rows(next.head), body: rows(next.body), foot: rows(next.foot) };
+    }
+    return next;
+  };
+
+  const placed = (items: Placed[]) => items.map((item) => ({ ...item, node: walk(item.node) }));
+
+  return {
+    ...template,
+    header: { ...template.header, items: placed(template.header.items) },
+    footer: { ...template.footer, items: placed(template.footer.items) },
+    overlay: placed(template.overlay),
+    body: template.body.map(walk),
+  };
+}
+
 export function mergeNodeStyle(node: Node, patch: Style): Node {
-  const style = { ...node.style, ...patch };
-  for (const [k, v] of Object.entries(patch)) if (v === undefined || v === '') delete (style as Record<string, unknown>)[k];
-  return { ...node, style } as Node;
+  return { ...node, style: applyStylePatch(node.style, patch) } as Node;
 }
 
 /**

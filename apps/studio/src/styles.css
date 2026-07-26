@@ -232,3 +232,4 @@ code { background: #f1f5f9; border-radius: 3px; padding: 0 3px; font-size: 10px;
   border-radius: 6px;
   font-size: 12px;
 }
+.tree-error { margin: 4px 6px 0; color: #b91c1c; font-size: 11px; line-height: 1.5; }
