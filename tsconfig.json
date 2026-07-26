@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": ["node"],
+    "paths": {
+      "@pdftc/schema": ["./packages/schema/src/index.ts"],
+      "@pdftc/renderer": ["./packages/renderer/src/index.ts"],
+      "@pdftc/fonts": ["./packages/fonts/src/index.ts"],
+      "@pdftc/fonts/list": ["./packages/fonts/src/list.ts"],
+      "@pdftc/pdf": ["./packages/pdf/src/index.ts"]
+    },
+    "baseUrl": "."
+  },
+  "include": ["packages/*/src/**/*", "apps/*/src/**/*"]
+}

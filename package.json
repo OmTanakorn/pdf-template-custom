@@ -1,0 +1,17 @@
+{
+  "name": "pdf-template-custom",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "render": "tsx packages/pdf/src/cli.ts",
+    "studio": "pnpm --filter @pdftc/studio dev",
+    "api": "pnpm --filter @pdftc/api start",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test packages/*/test/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
