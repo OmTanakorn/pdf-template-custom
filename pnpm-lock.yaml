@@ -84,6 +84,9 @@ importers:
 
   packages/renderer:
     dependencies:
+      '@pdftc/fonts':
+        specifier: workspace:*
+        version: link:../fonts
       '@pdftc/schema':
         specifier: workspace:*
         version: link:../schema

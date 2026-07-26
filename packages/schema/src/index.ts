@@ -271,6 +271,11 @@ const DEFAULT_PAGE: z.infer<typeof PageSetup> = {
 export const FontFace = z.object({
   family: z.string(),
   weight: z.union([z.number().int(), z.literal('normal'), z.literal('bold')]).default(400),
+  /**
+   * Variable-font weight axis, e.g. `[100, 900]`. One file then covers every
+   * weight, so a family costs ~250KB instead of one file per weight.
+   */
+  weightRange: z.tuple([z.number(), z.number()]).optional(),
   italic: z.boolean().default(false),
   /** Path relative to the font pack, or an absolute path / data URI. */
   src: z.string(),

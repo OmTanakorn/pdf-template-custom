@@ -1,3 +1,4 @@
+import { FALLBACK_FAMILIES } from '@pdftc/fonts/list';
 import type { Border, Box, Style } from '@pdftc/schema';
 
 export function mm(v: number): string {
@@ -105,7 +106,10 @@ export function styleToCss(s: Style, opts: { asFlex?: boolean } = {}): string {
 
 /** Always fall back to a Thai-capable family so missing glyphs never tofu. */
 export function cssFontStack(family: string): string {
-  const safe = cssSafe(family);
-  const quoted = /^[A-Za-z0-9_-]+$/.test(safe) ? safe : `"${safe}"`;
-  return `${quoted}, "Noto Sans Thai", "Sarabun", sans-serif`;
+  const quote = (name: string) => {
+    const safe = cssSafe(name);
+    return /^[A-Za-z0-9_-]+$/.test(safe) ? safe : `"${safe}"`;
+  };
+  const fallbacks = FALLBACK_FAMILIES.filter((f) => f !== family).map(quote);
+  return [quote(family), ...fallbacks, 'sans-serif'].join(', ');
 }

@@ -105,11 +105,14 @@ test('styleRef survives an inline font family', () => {
   assert.match(attr, /font-weight:700/);
 });
 
+const HOSTILE = '"} body{display:none} @font-face{font-family:"x';
+
 test('a hostile family name cannot escape the style block', () => {
   const template = parseTemplate({
     ...base,
-    fonts: [{ family: '"} body{display:none} @font-face{font-family:"x', src: 'x.ttf' }],
-    body: [{ id: 't', type: 'text', content: 'ก' }],
+    fonts: [{ family: HOSTILE, src: 'x.ttf' }],
+    // The family has to be referenced, or it is filtered out before emission.
+    body: [{ id: 't', type: 'text', style: { fontFamily: HOSTILE }, content: 'ก' }],
   });
   const html = renderHtml(template, data);
   assert.doesNotMatch(html, /body\{display:none\}/);
@@ -119,7 +122,51 @@ test('a data URI font src keeps its semicolon', () => {
   const template = parseTemplate({
     ...base,
     fonts: [{ family: 'X', src: 'data:font/ttf;base64,AAAA' }],
-    body: [{ id: 't', type: 'text', content: 'ก' }],
+    body: [{ id: 't', type: 'text', style: { fontFamily: 'X' }, content: 'ก' }],
   });
   assert.match(renderHtml(template, data), /url\("data:font\/ttf;base64,AAAA"\)/);
+});
+
+test('only the families a template uses get a @font-face rule', () => {
+  // The shipped pack is a few megabytes; declaring all of it would inline the
+  // whole pack into every rendered document.
+  const template = parseTemplate({
+    ...base,
+    fonts: [
+      { family: 'Sarabun', src: 'Sarabun-Regular.ttf' },
+      { family: 'Kanit', src: 'Kanit-Regular.ttf' },
+      { family: 'Charm', src: 'Charm-Regular.ttf' },
+    ],
+    defaultStyle: { fontFamily: 'Sarabun' },
+    body: [{ id: 't', type: 'text', style: { fontFamily: 'Kanit' }, content: 'ก' }],
+  });
+  const html = renderHtml(template, data);
+  assert.match(html, /font-family:"Sarabun"/);
+  assert.match(html, /font-family:"Kanit"/);
+  assert.doesNotMatch(html, /font-family:"Charm"/);
+});
+
+test('families used only inside a table cell still ship', () => {
+  const template = parseTemplate({
+    ...base,
+    fonts: [{ family: 'Charm', src: 'Charm-Regular.ttf' }],
+    body: [
+      {
+        id: 'tbl',
+        type: 'table',
+        columns: [{ width: '1fr' }],
+        body: [{ id: 'r', cells: [{ content: [{ id: 'c', type: 'text', style: { fontFamily: 'Charm' }, content: 'ก' }] }] }],
+      },
+    ],
+  });
+  assert.match(renderHtml(template, data), /font-family:"Charm"/);
+});
+
+test('a variable font declares its whole weight axis', () => {
+  const template = parseTemplate({
+    ...base,
+    fonts: [{ family: 'Anuphan', weightRange: [100, 700], src: 'Anuphan-VF.ttf' }],
+    body: [{ id: 't', type: 'text', style: { fontFamily: 'Anuphan' }, content: 'ก' }],
+  });
+  assert.match(renderHtml(template, data), /font-family:"Anuphan";font-weight:100 700/);
 });

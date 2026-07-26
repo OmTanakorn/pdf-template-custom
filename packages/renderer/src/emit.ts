@@ -12,6 +12,7 @@
 
 import { pageSize, type Cell, type Node, type Placed, type Row, type Style, type TableNode, type Template } from '@pdftc/schema';
 import { cssSafe, cssUrl, escapeAttr, escapeHtml, mergeStyles, mm, styleAttr, styleToCss } from './css.js';
+import { FALLBACK_FAMILIES } from '@pdftc/fonts/list';
 import { PAGINATOR_SOURCE } from './paginator.js';
 
 export interface EmitOptions {
@@ -150,15 +151,58 @@ function emitPlaced(ctx: Ctx, item: Placed, yOffset: number): string {
 
 /* ── Fonts ───────────────────────────────────────────────────── */
 
+/**
+ * Families named anywhere in the template. The shipped pack is a few megabytes,
+ * so declaring every face — and inlining every file when fonts are embedded —
+ * would put the whole pack inside each document.
+ */
+function usedFamilies(template: Template): Set<string> {
+  const found = new Set<string>(FALLBACK_FAMILIES);
+  const add = (style?: Style) => {
+    if (style?.fontFamily) found.add(style.fontFamily);
+  };
+
+  const walk = (node: Node): void => {
+    add(node.style);
+    if (node.type === 'stack') node.children.forEach(walk);
+    if (node.type === 'table') {
+      add(node.cellStyle);
+      add(node.zebraStyle);
+      for (const row of [...node.head, ...node.body, ...node.foot]) {
+        add(row.style);
+        for (const cell of row.cells) {
+          add(cell.style);
+          cell.content.forEach(walk);
+        }
+      }
+    }
+  };
+
+  add(template.defaultStyle);
+  Object.values(template.styles).forEach(add);
+  for (const item of [...template.header.items, ...template.footer.items, ...template.overlay]) walk(item.node);
+  template.body.forEach(walk);
+  return found;
+}
+
 function emitFontFaces(ctx: Ctx): string {
   const resolve = ctx.opts.fontResolver ?? ((src: string) => src);
+  const wanted = usedFamilies(ctx.template);
   return ctx.template.fonts
+    .filter((f) => wanted.has(f.family))
     .map((f) => {
       // A `<style>` block is not HTML-escaped, so a quote or brace in either
       // value would end the rule — or the whole element.
       const url = cssUrl(resolve(f.src));
       const family = cssSafe(f.family);
-      const weight = f.weight === 'normal' ? 400 : f.weight === 'bold' ? 700 : f.weight;
+      // A variable file declares a range so every weight maps to the one file.
+      const weight = f.weightRange
+        ? `${f.weightRange[0]} ${f.weightRange[1]}`
+        : f.weight === 'normal'
+          ? 400
+          : f.weight === 'bold'
+            ? 700
+            : f.weight;
       return `@font-face{font-family:"${family}";font-weight:${weight};font-style:${f.italic ? 'italic' : 'normal'};src:url("${url}");font-display:block}`;
     })
     .join('\n');

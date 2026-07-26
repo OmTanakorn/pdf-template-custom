@@ -1,5 +1,5 @@
 import type { Style } from '@pdftc/schema';
-import { FONT_FAMILIES } from '@pdftc/fonts/list';
+import { FONT_GROUPS } from '@pdftc/fonts/list';
 import { Color, Num, Row, Section, Segment, Select, Text } from './fields';
 
 interface Props {
@@ -35,11 +35,20 @@ export function StyleEditor({ style, onChange, styleNames = [], styleRef, onStyl
 
       <Section title="ตัวอักษร">
         <Row label="ฟอนต์">
-          <Select
-            value={s.fontFamily}
-            options={FONT_FAMILIES.map((f) => ({ value: f, label: f }))}
-            onChange={(v) => set('fontFamily', v)}
-          />
+          {/* Grouped by category; the blank option means "inherit", which is
+              what lets a styleRef or the document default supply the family. */}
+          <select value={s.fontFamily ?? ''} onChange={(e) => set('fontFamily', e.target.value || undefined)}>
+            <option value="">— สืบทอด —</option>
+            {FONT_GROUPS.map((group) => (
+              <optgroup key={group.label} label={group.label}>
+                {group.families.map((f) => (
+                  <option key={f} value={f}>
+                    {f}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
         </Row>
         <Row label="ขนาด">
           <Num value={s.fontSize} step={0.5} suffix="pt" min={1} onChange={(v) => set('fontSize', v)} />

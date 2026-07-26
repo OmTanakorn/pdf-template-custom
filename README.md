@@ -42,7 +42,7 @@ pnpm typecheck
 | `packages/schema` | Zod schema + type ของ Template (แหล่งความจริงเดียว) |
 | `packages/renderer` | ภาษา binding, resolve, emit HTML, paginator — ทำงานได้ทั้ง Node และเบราว์เซอร์ |
 | `packages/pdf` | Chromium (Playwright) → PDF + CLI |
-| `packages/fonts` | Sarabun (ฟอนต์ราชการไทย) + Noto Sans Thai |
+| `packages/fonts` | ฟอนต์ไทย 10 ตระกูลจาก Google Fonts (OFL) |
 | `apps/api` | บริการเรนเดอร์ ถือ Chromium ค้างไว้ (~150ms/ฉบับ) |
 | `apps/studio` | ตัวออกแบบ React ลากวาง + inspector + preview สด |
 
@@ -116,6 +116,24 @@ curl -X POST localhost:8787/api/render \
 ```
 
 `POST /api/html` คืน HTML กลางไว้ดีบัก · `GET /api/example` คืนเทมเพลตตัวอย่าง
+
+## ฟอนต์
+
+ทั้งหมดมาจาก Google Fonts ใต้สัญญาอนุญาต OFL (ตัวสัญญาอยู่ใน `packages/fonts/licenses/`) รวม ~2.9MB
+
+| กลุ่ม | ตระกูล |
+| --- | --- |
+| Sans | **Sarabun** (ค่าตั้งต้น · ฟอนต์ราชการไทย) · Noto Sans Thai · IBM Plex Sans Thai · Anuphan · Prompt · Kanit |
+| Serif | Noto Serif Thai · Trirong |
+| Display | Chakra Petch · Charm |
+
+Noto Sans Thai, Noto Serif Thai และ Anuphan เป็น variable font — ไฟล์เดียวครอบคลุมทุกน้ำหนัก (`weightRange` ใน `FontFace`) ที่เหลือมี 400 กับ 700
+
+ทุกตระกูลครอบคลุมทั้งไทยและละติน และมี fallback ต่อท้ายเสมอ (`Noto Sans Thai` → `Sarabun` → `sans-serif`) กลิฟที่ขาดจึงไม่กลายเป็นกล่องเปล่า
+
+**เอกสารจะฝังเฉพาะตระกูลที่ใช้จริง** — emitter เดินทั้งเทมเพลตเก็บ `fontFamily` ที่ถูกอ้างถึง แล้วปล่อย `@font-face` เท่าที่จำเป็น ใบกำกับภาษีที่ใช้ Sarabun อย่างเดียวจึงหนัก ~760KB แทนที่จะเป็น 3.7MB
+
+เพิ่มฟอนต์เองได้ผ่าน `template.fonts` (ชี้ไป URL หรือ data URI ก็ได้) โดยไม่ต้องแตะแพ็กเกจ
 
 ## ความเที่ยงตรง
 
