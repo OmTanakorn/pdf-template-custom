@@ -232,7 +232,7 @@ function NodeInspector({ node, template, onChange }: { node: Node; template: Tem
         </Section>
       )}
 
-      {node.type === 'table' && <TableEditor node={node} onChange={onChange} />}
+      {node.type === 'table' && <TableEditor node={node} onChange={onChange} styleNames={styleNames} />}
 
       <StyleEditor
         style={node.style}
@@ -281,14 +281,23 @@ function PageInspector({ template, commit }: { template: Template; commit: (t: T
             onChange={(v) => commit({ ...template, page: { ...page, orientation: v } })}
           />
         </Row>
-        <Row label="ขอบ (บน/ขวา/ล่าง/ซ้าย)">
-          <span className="quad">
-            {(['top', 'right', 'bottom', 'left'] as const).map((side) => (
-              <Num
-                key={side}
-                value={page.margin[side]}
-                onChange={(v) => commit({ ...template, page: { ...page, margin: { ...page.margin, [side]: v ?? 0 } } })}
-              />
+        {/* Each side names itself under its own box — the old parenthetical
+            label wrapped to two lines and still had to be counted off. */}
+        <Row label="ขอบกระดาษ">
+          <span className="quad sides">
+            {([
+              ['top', 'บน'],
+              ['right', 'ขวา'],
+              ['bottom', 'ล่าง'],
+              ['left', 'ซ้าย'],
+            ] as const).map(([side, label]) => (
+              <span key={side} className="side">
+                <Num
+                  value={page.margin[side]}
+                  onChange={(v) => commit({ ...template, page: { ...page, margin: { ...page.margin, [side]: v ?? 0 } } })}
+                />
+                <span className="side-name">{label}</span>
+              </span>
             ))}
           </span>
         </Row>
