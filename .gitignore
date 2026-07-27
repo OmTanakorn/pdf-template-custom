@@ -3,3 +3,11 @@ dist/
 *.pdf
 *.log
 .DS_Store
+
+# Whatever the studio has saved on this machine. The API picks the
+# directory up from TEMPLATE_DIR, so this is only the local default.
+.templates/
+
+# Vendored skill sources. skills-lock.json pins each one by hash and is
+# tracked, so the checkout is reproducible without carrying the copies.
+.claude/skills/
