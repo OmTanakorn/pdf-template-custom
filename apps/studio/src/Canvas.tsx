@@ -10,6 +10,15 @@ const LAYERS: LayerName[] = ['header', 'overlay', 'footer'];
 
 type DragMode = 'move' | 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 
+/** Numbered ruler stops, thinned out until the labels stop colliding. The
+ *  gradient keeps drawing 5mm and 10mm ticks either way. */
+function ticks(lengthMm: number, scale: number): number[] {
+  const stepMm = [10, 20, 50, 100].find((step) => step * scale >= 30) ?? 100;
+  const out: number[] = [];
+  for (let mm = 0; mm <= lengthMm - stepMm / 2; mm += stepMm) out.push(mm);
+  return out;
+}
+
 interface Props {
   template: Template;
   data: unknown;
@@ -121,9 +130,56 @@ export function Canvas({ template, data, zoom, selection, dispatch }: Props) {
 
   const scale = PX_PER_MM * zoom;
 
+  // The selected frame, projected onto the rulers so its extent can be read
+  // off the scale rather than inferred from the inspector.
+  const marked = selection?.kind === 'placed' ? overlays.find((o) => o.layer === selection.layer && o.index === selection.index) : undefined;
+
+  const bodyTop = template.page.margin.top + template.header.height;
+  const bodyHeight = pageH - bodyTop - template.page.margin.bottom - template.footer.height;
+
   return (
     <div className="canvas-scroll">
-      <div className="canvas-stage" style={{ width: pageW * scale, height: pageH * pageCount * scale }}>
+      <div
+        className="canvas-stage"
+        style={{ width: pageW * scale, height: pageH * pageCount * scale, ['--mm' as string]: `${scale}px` }}
+      >
+        <span className="ruler-corner">mm</span>
+
+        <div className="ruler ruler-h">
+          {ticks(pageW, scale).map((mm) => (
+            <i key={mm} style={{ left: mm * scale }}>
+              {mm}
+            </i>
+          ))}
+          {marked && <span className="extent extent-h" style={{ left: marked.item.frame.x * scale, width: marked.item.frame.w * scale }} />}
+        </div>
+
+        {/* One vertical ruler per page: a frame's y is measured from the top of
+            its own page, so a scale running the whole stack would lie. */}
+        {Array.from({ length: pageCount }, (_, page) => (
+          <div key={page} className="ruler ruler-v" style={{ top: page * pageH * scale, height: pageH * scale }}>
+            {ticks(pageH, scale).map((mm) => (
+              <i key={mm} style={{ top: mm * scale }}>
+                {mm}
+              </i>
+            ))}
+            {/* Only page 1 carries handles, so only page 1 shows the mark. */}
+            {page === 0 && marked && (
+              <span className="extent extent-v" style={{ top: marked.top * scale, height: (marked.item.frame.h ?? 6) * scale }} />
+            )}
+          </div>
+        ))}
+
+        <div className="body-bracket" style={{ top: bodyTop * scale, height: bodyHeight * scale }}>
+          <span>body</span>
+        </div>
+
+        {Array.from({ length: pageCount - 1 }, (_, i) => (
+          <div key={i} className="page-cut" style={{ top: (i + 1) * pageH * scale }}>
+            <span>หน้า {i + 2}</span>
+          </div>
+        ))}
+
         <iframe
           ref={frameRef}
           title="preview"
@@ -154,9 +210,7 @@ export function Canvas({ template, data, zoom, selection, dispatch }: Props) {
               width: (pageW - template.page.margin.left - template.page.margin.right) * scale,
               height: (pageH - template.page.margin.top - template.header.height - template.page.margin.bottom - template.footer.height) * scale,
             }}
-          >
-            <span>body (flow)</span>
-          </div>
+          />
 
           {overlays.map(({ layer, index, item, top }) => {
             const active = selection?.kind === 'placed' && selection.layer === layer && selection.index === index;
@@ -172,7 +226,14 @@ export function Canvas({ template, data, zoom, selection, dispatch }: Props) {
                 }}
                 onPointerDown={(e) => onPointerDown(e, 'move', layer, index, item)}
               >
-                <span className="handle-tag">{item.node.name ?? item.node.id}</span>
+                <span className="handle-tag">
+                  <b>{item.node.name ?? item.node.id}</b>
+                  {/* Position is read off the ruler; the tag only has to carry
+                      what the ruler cannot show at a glance. */}
+                  <span className="readout">
+                    {round(item.frame.w)}×{round(item.frame.h ?? 6)}
+                  </span>
+                </span>
                 {active &&
                   (['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'] as DragMode[]).map((mode) => (
                     <i
@@ -188,6 +249,11 @@ export function Canvas({ template, data, zoom, selection, dispatch }: Props) {
       </div>
     </div>
   );
+}
+
+/** Frame values carry at most two decimals; trailing zeros are noise in a tag. */
+function round(mm: number): string {
+  return String(Math.round(mm * 100) / 100);
 }
 
 export { MM_PER_PX, PX_PER_MM };

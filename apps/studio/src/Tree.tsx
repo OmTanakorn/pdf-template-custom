@@ -64,13 +64,14 @@ export function Tree({ template, selection, dispatch }: Props) {
         className={`tree-root${selection?.kind === 'page' || selection === null ? ' is-active' : ''}`}
         onClick={() => dispatch({ type: 'select', selection: { kind: 'page' } })}
       >
-        📄 {template.name}
+        <span className="sheet-mark" aria-hidden="true" />
+        <span className="tree-root-name">{template.name}</span>
       </button>
 
       {(['header', 'overlay', 'footer'] as LayerName[]).map((layer) => (
-        <section key={layer} className="tree-group">
+        <section key={layer} className={`tree-group layer-${layer}`}>
           <header>
-            <h4>{layer === 'header' ? 'หัวกระดาษ' : layer === 'footer' ? 'ท้ายกระดาษ' : 'ทับหน้า (overlay)'}</h4>
+            <h4>{layer === 'header' ? 'หัวกระดาษ' : layer === 'footer' ? 'ท้ายกระดาษ' : 'ทับหน้า'}</h4>
             <AddMenu onPick={(type) => addPlaced(layer, type)} />
           </header>
           <ul>
@@ -79,7 +80,8 @@ export function Tree({ template, selection, dispatch }: Props) {
               return (
                 <li key={`${item.node.id}-${index}`} className={active ? 'is-active' : ''}>
                   <button type="button" onClick={() => dispatch({ type: 'select', selection: { kind: 'placed', layer, index } })}>
-                    <em>{item.node.type}</em> {item.node.name ?? preview(item.node)}
+                    <em className="mono">{item.node.type}</em>
+                    <b>{item.node.name ?? preview(item.node)}</b>
                   </button>
                   <span className="reorder">
                     <button type="button" onClick={() => move(layer, index, -1)} title="ขึ้น">↑</button>
@@ -93,9 +95,9 @@ export function Tree({ template, selection, dispatch }: Props) {
         </section>
       ))}
 
-      <section className="tree-group">
+      <section className="tree-group layer-body">
         <header>
-          <h4>เนื้อหา (flow · ตัดหน้าอัตโนมัติ)</h4>
+          <h4>เนื้อหา · ตัดหน้าเอง</h4>
           <AddMenu onPick={addBody} />
         </header>
         <ul>
@@ -104,7 +106,8 @@ export function Tree({ template, selection, dispatch }: Props) {
             return (
               <li key={`${node.id}-${index}`} className={active ? 'is-active' : ''}>
                 <button type="button" onClick={() => dispatch({ type: 'select', selection: { kind: 'body', index } })}>
-                  <em>{node.type}</em> {node.name ?? preview(node)}
+                  <em className="mono">{node.type}</em>
+                  <b>{node.name ?? preview(node)}</b>
                 </button>
                 <span className="reorder">
                   <button type="button" onClick={() => moveBody(index, -1)} title="ขึ้น">↑</button>
@@ -204,7 +207,7 @@ function StylesPanel({
   }
 
   return (
-    <section className="tree-group">
+    <section className="tree-group layer-body">
       <header>
         <h4>สไตล์ที่ตั้งชื่อไว้</h4>
         <button type="button" className="add-menu" onClick={addStyle}>

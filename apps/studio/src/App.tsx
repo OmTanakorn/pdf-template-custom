@@ -148,23 +148,35 @@ export function App() {
   return (
     <div className="app">
       <header className="toolbar">
-        <strong className="brand">PDF Template Studio</strong>
+        <div className="ident">
+          <span className="mark" aria-hidden="true" />
+          <span className="brand">
+            <span className="brand-name">PDF Template Studio</span>
+            {/* The sheet the template is cut to, kept in sight rather than
+                buried three sections down the inspector. */}
+            <span className="brand-format mono">
+              {state.template.page.preset} · {state.template.page.orientation === 'portrait' ? 'ตั้ง' : 'นอน'}
+            </span>
+          </span>
+        </div>
 
         <TemplateBar state={state} lib={library} />
 
         <div className="tool-group">
-          <button type="button" onClick={() => dispatch({ type: 'undo' })} disabled={state.past.length === 0} title="Ctrl+Z">
+          <button type="button" onClick={() => dispatch({ type: 'undo' })} disabled={state.past.length === 0} title="ย้อนกลับ (Ctrl+Z)">
             ↶
           </button>
-          <button type="button" onClick={() => dispatch({ type: 'redo' })} disabled={state.future.length === 0} title="Ctrl+Shift+Z">
+          <button type="button" onClick={() => dispatch({ type: 'redo' })} disabled={state.future.length === 0} title="ทำซ้ำ (Ctrl+Shift+Z)">
             ↷
           </button>
         </div>
 
         <div className="tool-group">
-          <button type="button" onClick={() => dispatch({ type: 'zoom', zoom: state.zoom - 0.1 })}>−</button>
-          <span className="zoom">{Math.round(state.zoom * 100)}%</span>
-          <button type="button" onClick={() => dispatch({ type: 'zoom', zoom: state.zoom + 0.1 })}>+</button>
+          <button type="button" onClick={() => dispatch({ type: 'zoom', zoom: state.zoom - 0.1 })} title="ย่อ">−</button>
+          <button type="button" className="zoom" onClick={() => dispatch({ type: 'zoom', zoom: 1 })} title="กลับไป 100%">
+            {Math.round(state.zoom * 100)}%
+          </button>
+          <button type="button" onClick={() => dispatch({ type: 'zoom', zoom: state.zoom + 0.1 })} title="ขยาย">+</button>
         </div>
 
         <nav className="tabs">
